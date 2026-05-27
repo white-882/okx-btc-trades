@@ -219,7 +219,31 @@ def main():
         print(f"📊 持仓: 空仓")
     
     # 3. 执行
-    if signal and not positions:
+    if signal and positions:
+        # 检查是否方向相反
+        sig_dir = 'long' if signal[0] == 'LONG' else 'short'
+        for p in positions:
+            if p['posSide'] != sig_dir:
+                # 方向反转 → 平仓+反向开仓
+                close_side = 'sell' if p['posSide'] == 'long' else 'buy'
+                print(f"\n🔔 反转: {'多→空' if p['posSide']=='long' else '空→多'}")
+                r = close_position(close_side, p['pos'])
+                if r['code'] == '0':
+                    print(f"   ✅ 已平仓")
+                    # 开反向
+                    price = signal[1]
+                    sz = round(TRADE_SIZE_USDT / price, 4)
+                    r2 = place_order('buy' if signal[0] == 'LONG' else 'sell', sz)
+                    if r2['code'] == '0':
+                        print(f"   ✅ 反向开仓: {signal[0]} {sz}张 市价")
+                    else:
+                        print(f"   ❌ 反向开仓失败: {r2.get('msg','?')}")
+                else:
+                    print(f"   ❌ 平仓失败: {r.get('msg','?')}")
+            else:
+                print(f"\n📌 方向一致，持仓不变")
+    
+    elif signal and not positions:
         # 开仓
         print(f"\n🔔 开仓: {signal[0]}")
         price = signal[1]
