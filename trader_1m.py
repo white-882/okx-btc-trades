@@ -48,9 +48,13 @@ def get_balance():
                     return float(detail.get('availBal', 0))
     return 0
 
-def place_order(side, sz):
-    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side,
-                        'ordType': 'market', 'sz': str(sz)})
+def place_order(side, sz, pos_side=None):
+    """pos_side: 'long' or 'short' for perpetual"""
+    order = {'instId': INST_ID, 'tdMode': 'cross', 'side': side,
+             'ordType': 'market', 'sz': str(sz)}
+    if pos_side:
+        order['posSide'] = pos_side
+    body = json.dumps(order)
     return okx_request('POST', '/api/v5/trade/order', body)
 
 def close_position(side, sz):
@@ -178,12 +182,13 @@ def main():
                 cs='sell' if p['posSide']=='long' else 'buy'
                 print(f"🔔 反转平仓")
                 r=close_position(cs,p['pos'])
-                if r.get('code')=='0':
+                if r.get('code') == '0':
                     print("   ✅ 平仓")
                     ep=signal['price']
                     sz,pct=calc_size(balance,ep,0)
-                    r2=place_order('buy' if signal['direction']=='LONG' else 'sell',sz)
-                    if r2.get('code')=='0':
+                    r2=place_order('buy' if signal['direction']=='LONG' else 'sell', sz,
+                                   'long' if signal['direction']=='LONG' else 'short')
+                    if r2.get('code') == '0':
                         print(f"   ✅ {signal['direction']} {sz}张")
                     else:
                         print(f"   ❌ {r2.get('msg','?')}")
@@ -192,9 +197,10 @@ def main():
         ep=signal['price']
         sz,pct=calc_size(balance,ep,0)
         print(f"🔔 {signal['direction']} {sz}张 @ {ep:.1f}")
-        r=place_order('buy' if signal['direction']=='LONG' else 'sell',sz)
+        r=place_order('buy' if signal['direction']=='LONG' else 'sell', sz,
+                       'long' if signal['direction']=='LONG' else 'short')
         print(f"   OKX响应: {r}")
-        if r.get('code')=='0': print("   ✅")
+        if r.get('code') == '0': print("   ✅")
         else: print(f"   ❌ {r.get('msg',str(r)[:100])}")
     
     print(f"\n下次: {datetime.now().strftime('%H:%M')} (每5分钟)")
