@@ -80,6 +80,13 @@ def fetch_1m_bars(limit=500):
 SWING_BASE=200; ATR_T=2.5; RSI_L=60; RSI_S=40
 CAPITAL=10000; MAX_POS=0.20; MIN_POS=0.02; VOL_TARGET=0.015
 
+# ==== 硬风控 ====
+MAX_DRAWDOWN_PCT = 0.50   # 最大回撤50%→停止交易
+MAX_POSITION_PCT = 0.30   # 单笔最大仓位30%
+DAILY_LOSS_LIMIT = 0.05   # 日亏损5%→停到次日
+MAX_CONSECUTIVE_LOSS = 5  # 连亏5次→冷却30分钟
+COOLDOWN_MINUTES = 30
+
 def calc_size(bal,price,atr):
     atr_pct=atr/price
     pct=MAX_POS*min(2.0,VOL_TARGET/max(atr_pct,0.001))
@@ -161,12 +168,23 @@ def main():
     positions=get_positions()
     balance=get_balance()
     
+    # ==== 风控检查 ====
+    # 1. 总回撤检查(以2000U为基准)
+    base_capital = 2000
+    total_dd = (base_capital - balance) / base_capital
+    if total_dd > MAX_DRAWDOWN_PCT:
+        print(f"🛑 总回撤{total_dd*100:.0f}%>{MAX_DRAWDOWN_PCT*100:.0f}% 停止交易!")
+        return
+    
+    # 2. 单笔仓位上限
+    max_contracts = max(1, int(balance * MAX_POSITION_PCT / 75000 / 0.01))
+    
     if signal:
         print(f"📡 {signal['direction']} @ {signal['price']:.1f} | OB:{signal['ob_bottom']:.0f}~{signal['ob_top']:.0f}")
     else:
         print("📡 无信号")
     
-    print(f"💰 {balance:.2f} USDT")
+    print(f"💰 {balance:.2f} USDT | DD:{total_dd*100:.1f}% | 仓位上限:{max_contracts}张")
     if positions:
         for p in positions:
             s='多' if p['posSide']=='long' else '空'
