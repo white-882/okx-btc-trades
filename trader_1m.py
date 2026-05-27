@@ -45,13 +45,13 @@ def get_balance():
     return 0
 
 def place_order(side, sz):
-    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side, 'ordType': 'market', 'sz': str(sz)})
+    body = json.dumps({'instId': INST_ID, 'tdMode': 'cash', 'side': side, 'ordType': 'market', 'sz': str(sz)})
     return okx_request('POST', '/api/v5/trade/order', body)
 
 def close_position(side, sz):
-    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side, 'ordType': 'market', 'sz': str(sz), 'posSide': 'long' if side == 'sell' else 'short'})
+    """现货卖出"""
+    body = json.dumps({'instId': INST_ID, 'tdMode': 'cash', 'side': 'sell', 'ordType': 'market', 'sz': str(sz)})
     return okx_request('POST', '/api/v5/trade/order', body)
-
 # ===== 获取1分钟K线 =====
 def fetch_1m_bars(limit=500):
     url=f'https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=BTC_USDT&interval=1m&limit={limit}'
