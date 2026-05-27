@@ -1,7 +1,7 @@
 name: Collect OKX Trades
 on:
   schedule:
-    - cron: '*/15 * * * *'  # 每15分钟
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Fetch OKX trades
+      - name: Fetch OKX trades (1min loop)
         run: python3 collect.py
       
       - name: Commit and push if changed
@@ -20,4 +20,4 @@ jobs:
           git config user.name 'okx-collector[bot]'
           git config user.email 'bot@okx-collector.local'
           git add data/
-          git diff --staged --quiet || (git commit -m "📊 trades $(date -u +%Y-%m-%dT%H:%M)" && git push)
+          git diff --staged --quiet || (git commit -m "trades $(date -u +%Y-%m-%dT%H:%M)" && git push)
