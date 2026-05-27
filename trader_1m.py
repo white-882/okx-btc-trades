@@ -193,8 +193,9 @@ def main():
         sz,pct=calc_size(balance,ep,0)
         print(f"🔔 {signal['direction']} {sz}张 @ {ep:.1f}")
         r=place_order('buy' if signal['direction']=='LONG' else 'sell',sz)
+        print(f"   OKX响应: {r}")
         if r.get('code')=='0': print("   ✅")
-        else: print(f"   ❌ {r.get('msg','?')}")
+        else: print(f"   ❌ {r.get('msg',str(r)[:100])}")
     
     print(f"\n下次: {datetime.now().strftime('%H:%M')} (每5分钟)")
 
