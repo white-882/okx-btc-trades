@@ -18,8 +18,11 @@ OKX_BASE = "https://www.okx.com"
 DEMO = False  # 实盘
 
 INST_ID = "BTC-USDT-SWAP"
-TRADE_SIZE_USDT = 100
+TRADE_SIZE_USDT = 100      # 基准仓位（动态调整）
 LEVERAGE = 1
+MAX_POS_PCT = 0.20         # 最大仓位占比20%
+MIN_POS_PCT = 0.02         # 最小仓位占比2%
+VOL_TARGET = 0.015         # 目标波动率1.5%
 
 # ============ V4 引擎参数 ============
 SWING_SIZE = 70
@@ -27,6 +30,16 @@ ATR_TRAIL = 2.5
 RSI_LONG_MAX = 60
 RSI_SHORT_MIN = 40
 CAPITAL = 10000  # 用于动态仓位计算
+
+def calc_position_size(balance, entry_price, atr_val):
+    """V4动态仓位: ATR波动率越高仓位越小, 越低仓位越大"""
+    atr_pct = atr_val / entry_price  # ATR占价格百分比
+    # V4公式: pos_pct = 0.20 * min(2.0, 0.015 / max(atr_pct, 0.001))
+    pos_pct = MAX_POS_PCT * min(2.0, VOL_TARGET / max(atr_pct, 0.001))
+    pos_pct = max(MIN_POS_PCT, min(MAX_POS_PCT, pos_pct))  # 夹在2%~20%
+    pos_usdt = balance * pos_pct
+    sz = round(pos_usdt / entry_price, 4)
+    return sz, pos_pct
 
 # ============ OKX API 函数 ============
 def okx_request(method, path, body=""):
@@ -398,10 +411,10 @@ def main():
                         print(f"   🎯 15m入: {entry_price:.1f} (止损{entry_15m['stop']:.1f})")
                     else:
                         entry_price = signal['price']
-                    sz = round(TRADE_SIZE_USDT / entry_price, 4)
+                    sz, pct = calc_position_size(balance, entry_price, signal.get('atr', entry_price*0.02))
                     r2 = place_order('buy' if signal['direction'] == 'LONG' else 'sell', sz)
                     if r2['code'] == '0':
-                        print(f"   ✅ 反向: {signal['direction']} {sz}张 @ {entry_price:.1f}")
+                        print(f"   ✅ 反向: {signal['direction']} {sz}张 ({pct*100:.0f}%仓位) @ {entry_price:.1f}")
                     else:
                         print(f"   ❌ 失败: {r2.get('msg','?')}")
                 else:
@@ -417,10 +430,10 @@ def main():
             entry_price = signal['price']
         
         print(f"🔔 开仓: {signal['direction']}")
-        sz = round(TRADE_SIZE_USDT / entry_price, 4)
+        sz, pct = calc_position_size(balance, entry_price, signal.get('atr', entry_price*0.02))
         r = place_order('buy' if signal['direction'] == 'LONG' else 'sell', sz)
         if r['code'] == '0':
-            print(f"   ✅ 已下单: {signal['direction']} {sz}张")
+            print(f"   ✅ 已下单: {signal['direction']} {sz}张 ({pct*100:.0f}%仓位)")
         else:
             print(f"   ❌ 失败: {r.get('msg','?')}")
     
