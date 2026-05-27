@@ -91,8 +91,8 @@ def calc_size(bal,price,atr):
     atr_pct=atr/price
     pct=MAX_POS*min(2.0,VOL_TARGET/max(atr_pct,0.001))
     pct=max(MIN_POS,min(MAX_POS,pct))
-    # 永续合约: 1张=0.01BTC, 账号561U开1张
-    contracts = 1  # 固定1张(资金不足时)
+    # 永续合约: 1张=0.01BTC, 动态仓位(2000U起步)
+    contracts = max(1, int(bal * pct / (price * 0.01)))
     actual_pct = contracts * price * 0.01 / bal
     return contracts, actual_pct
 
