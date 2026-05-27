@@ -247,119 +247,70 @@ def find_15m_swing_structure(df15):
 
 def find_15m_entry(signal):
     """
-    15分钟结构精调入場
-    LONG: 找OB区内的15m摆荡低点 → 等止跌信号 → 入场, 止损=该低点下方
-    SHORT: 找OB区内的15m摆荡高点 → 等止涨信号 → 入场, 止损=该高点上方
-    
-    不入场的几种情况:
-    - 15m价格还在OB区上方(LONG) / 下方(SHORT) → 等回踩
-    - 15m没有形成摆荡结构 → 等
-    - 没有反转K线形态 → 等
+    15分钟精调入场价（不决定入不入，只决定在哪入）
+    4H已决定入场，15m只负责找这根K线里最好的价格。
+    找不到完美位置就用当前15m收盘价，绝不错过入场。
     """
     df15 = fetch_15m_data()
-    if df15 is None: return None
+    if df15 is None: 
+        return {'entry': signal['price'], 'stop': None, 'source': '4H信号价(无15m数据)'}
     
     direction = signal['direction']
     ob_top = signal['ob_top']; ob_bottom = signal['ob_bottom']
     ob_range = ob_top - ob_bottom
-    if ob_range <= 0: return None
     
     current = df15['close'].iloc[-1]
+    current_low = df15['low'].iloc[-1]; current_high = df15['high'].iloc[-1]
     
     # 找15m摆荡结构
     swings_h, swings_l = find_15m_swing_structure(df15)
     
-    # 15m ATR (用于止损备选)
+    # 15m ATR
     h=df15['high'].values; l=df15['low'].values; c=df15['close'].values
     tr15 = np.maximum(h-l, np.maximum(abs(h-np.roll(c,1)), abs(l-np.roll(c,1))))
     tr15[0] = h[0]-l[0]
     atr15 = pd.Series(tr15).ewm(alpha=2/15, adjust=False).mean().values[-1]
     
     if direction == 'LONG':
-        # ---- LONG: 找OB区内的最优买点 ----
+        # 在OB区内找最优买价: 越低越好
+        best_price = current  # 默认当前价
         
-        # 1. 价格必须在OB区附近(不能高出OB顶太多)
-        if current > ob_top * 1.005:
-            # 价格还在OB区上方, 等回踩
-            return {'waiting': True, 'reason': f'等回踩OB区(当前{current:.0f}>{ob_top:.0f})',
-                    'target': ob_top, 'current': current}
+        # 找OB区内的15m最低点
+        if ob_range > 0:
+            zone_lows = [price for _, price in swings_l if ob_bottom <= price <= ob_top]
+            if zone_lows:
+                best_price = min(zone_lows)  # OB区内摆荡低点
+            elif current_low >= ob_bottom:
+                best_price = min(current, current_low)  # 取当前或最低
+            # 如果15m有更低的价在OB区内, 用它
+            in_zone_15m = df15[(df15['low'] >= ob_bottom) & (df15['low'] <= ob_top)]
+            if len(in_zone_15m) > 0:
+                best_price = min(best_price, in_zone_15m['low'].min())
         
-        # 2. 找OB区内的15m摆荡低点
-        zone_swing_lows = [(idx, price) for idx, price in swings_l 
-                          if ob_bottom <= price <= ob_top]
+        stop_loss = best_price - max(best_price * 0.005, atr15 * 0.5) if STOP_15M_STRUCTURE else ob_bottom - atr15 * 0.5
         
-        if zone_swing_lows:
-            # 最近的低点
-            latest_low = max(zone_swing_lows, key=lambda x: x[0])
-            entry_price = latest_low[1]
-            
-            # 止损: 该摆荡低点下方0.3% 或 ATR*0.5
-            if STOP_15M_STRUCTURE:
-                stop_loss = entry_price - max(entry_price * 0.003, atr15 * 0.5)
-            else:
-                stop_loss = ob_bottom - atr15 * 0.5
-            
-            # 3. 反转确认: 最近一根15mK是阳线(收>开) 且 收在低点上方
-            last_candle = df15.iloc[-1]
-            last_bullish = last_candle['close'] > last_candle['open']
-            near_low = abs(current - entry_price) / entry_price < 0.005
-            
-            if not ENTRY_15M_PATTERN or (last_bullish and near_low):
-                return {'entry': entry_price, 'stop': stop_loss, 
-                       'source': f'15m摆荡低点{entry_price:.0f}', 'atr': atr15}
-            else:
-                return {'waiting': True, 
-                       'reason': f'等15m止跌信号(低点{entry_price:.0f} 当前{current:.0f})',
-                       'target': entry_price, 'current': current}
-        else:
-            # 没有OB区内的摆荡低点 → 用当前价, 等更低
-            if current <= ob_bottom + ob_range * 0.5:
-                # 已经在OB区下半部, 可以入
-                return {'entry': current, 'stop': ob_bottom - atr15 * 0.5,
-                       'source': f'OB区下半部{current:.0f}', 'atr': atr15}
-            else:
-                return {'waiting': True,
-                       'reason': f'等15m形成OB区低点(当前{current:.0f})',
-                       'target': ob_bottom + ob_range * 0.3, 'current': current}
+        return {'entry': best_price, 'stop': stop_loss,
+                'source': f'15m最优{best_price:.0f}' if best_price != current else f'15m当前{current:.0f}',
+                'atr': atr15}
     
     else:  # SHORT
-        # ---- SHORT: 找OB区内的最优卖点 ----
+        best_price = current
         
-        if current < ob_bottom * 0.995:
-            return {'waiting': True, 'reason': f'等反弹OB区(当前{current:.0f}<{ob_bottom:.0f})',
-                    'target': ob_bottom, 'current': current}
+        if ob_range > 0:
+            zone_highs = [price for _, price in swings_h if ob_bottom <= price <= ob_top]
+            if zone_highs:
+                best_price = max(zone_highs)  # OB区内摆荡高点
+            elif current_high <= ob_top:
+                best_price = max(current, current_high)
+            in_zone_15m = df15[(df15['high'] <= ob_top) & (df15['high'] >= ob_bottom)]
+            if len(in_zone_15m) > 0:
+                best_price = max(best_price, in_zone_15m['high'].max())
         
-        zone_swing_highs = [(idx, price) for idx, price in swings_h
-                           if ob_bottom <= price <= ob_top]
+        stop_loss = best_price + max(best_price * 0.005, atr15 * 0.5) if STOP_15M_STRUCTURE else ob_top + atr15 * 0.5
         
-        if zone_swing_highs:
-            latest_high = max(zone_swing_highs, key=lambda x: x[0])
-            entry_price = latest_high[1]
-            
-            if STOP_15M_STRUCTURE:
-                stop_loss = entry_price + max(entry_price * 0.003, atr15 * 0.5)
-            else:
-                stop_loss = ob_top + atr15 * 0.5
-            
-            last_candle = df15.iloc[-1]
-            last_bearish = last_candle['close'] < last_candle['open']
-            near_high = abs(current - entry_price) / entry_price < 0.005
-            
-            if not ENTRY_15M_PATTERN or (last_bearish and near_high):
-                return {'entry': entry_price, 'stop': stop_loss,
-                       'source': f'15m摆荡高点{entry_price:.0f}', 'atr': atr15}
-            else:
-                return {'waiting': True,
-                       'reason': f'等15m止涨信号(高点{entry_price:.0f} 当前{current:.0f})',
-                       'target': entry_price, 'current': current}
-        else:
-            if current >= ob_top - ob_range * 0.5:
-                return {'entry': current, 'stop': ob_top + atr15 * 0.5,
-                       'source': f'OB区上半部{current:.0f}', 'atr': atr15}
-            else:
-                return {'waiting': True,
-                       'reason': f'等15m形成OB区高点(当前{current:.0f})',
-                       'target': ob_top - ob_range * 0.3, 'current': current}
+        return {'entry': best_price, 'stop': stop_loss,
+                'source': f'15m最优{best_price:.0f}' if best_price != current else f'15m当前{current:.0f}',
+                'atr': atr15}
 
 # ============ 主程序 ============
 def main():
@@ -376,12 +327,9 @@ def main():
         
         entry_15m = find_15m_entry(signal)
         if entry_15m:
-            if entry_15m.get('waiting'):
-                print(f"   ⏳ {entry_15m.get('reason','等15m到位')}")
-            else:
-                print(f"   ✅ {entry_15m.get('source','15m精调')} | 止损{entry_15m['stop']:.1f}")
+            print(f"   ✅ {entry_15m.get('source','15m精调')} | 止损{entry_15m['stop']:.1f}")
         else:
-            print(f"   ⚠️ 15m数据异常")
+            print(f"   ⚠️ 15m数据异常,用4H信号价")
     else:
         print("📡 无V4信号")
     
@@ -407,7 +355,7 @@ def main():
                 r = close_position(close_side, p['pos'])
                 if r['code'] == '0':
                     print(f"   ✅ 已平仓")
-                    if entry_15m and not entry_15m.get('waiting'):
+                    if entry_15m:
                         entry_price = entry_15m['entry']
                         print(f"   🎯 15m入: {entry_price:.1f} (止损{entry_15m['stop']:.1f})")
                     else:
@@ -424,23 +372,19 @@ def main():
                 print(f"\n📌 同向，不变 (V4: 不放信号消失)")
     
     elif signal and not positions:
-        if entry_15m and not entry_15m.get('waiting'):
+        if entry_15m:
             entry_price = entry_15m['entry']
-            print(f"\n🎯 15m入: {entry_price:.1f} (止损{entry_15m['stop']:.1f})")
-        elif entry_15m and entry_15m.get('waiting'):
-            print(f"\n⏳ {entry_15m.get('reason','15m未到位')}")
-            entry_price = None
+            print(f"\n🎯 {entry_15m.get('source','15m精调')}: {entry_price:.1f} (止损{entry_15m['stop']:.1f})")
         else:
             entry_price = signal['price']
         
-        if entry_price:
-            print(f"🔔 开仓: {signal['direction']}")
-            sz = round(TRADE_SIZE_USDT / entry_price, 4)
-            r = place_order('buy' if signal['direction'] == 'LONG' else 'sell', sz)
-            if r['code'] == '0':
-                print(f"   ✅ 已下单: {signal['direction']} {sz}张")
-            else:
-                print(f"   ❌ 失败: {r.get('msg','?')}")
+        print(f"🔔 开仓: {signal['direction']}")
+        sz = round(TRADE_SIZE_USDT / entry_price, 4)
+        r = place_order('buy' if signal['direction'] == 'LONG' else 'sell', sz)
+        if r['code'] == '0':
+            print(f"   ✅ 已下单: {signal['direction']} {sz}张")
+        else:
+            print(f"   ❌ 失败: {r.get('msg','?')}")
     
     # V4引擎: 不放信号消失平仓 — 持仓等趋势反转或止损
     
