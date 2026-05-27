@@ -194,12 +194,15 @@ def main():
             av=signal.get('atr',curr*0.002) if signal else curr*0.002
             
             for p in positions:
+                # V4移动止损: 只用OB区+价格, 不用inv
                 if p['posSide']=='long':
-                    ts=max(inv, curr-ATR_T*av) if inv else curr-ATR_T*av
-                    hit=curr_l<=ts
+                    ob_bottom = signal.get('ob_bottom', curr-ATR_T*av) if signal else curr-ATR_T*av
+                    ts = max(ob_bottom, curr - ATR_T * av)
+                    hit = curr_l <= ts
                 else:
-                    ts=min(inv, curr+ATR_T*av) if inv else curr+ATR_T*av
-                    hit=curr_h>=ts
+                    ob_top = signal.get('ob_top', curr+ATR_T*av) if signal else curr+ATR_T*av
+                    ts = min(ob_top, curr + ATR_T * av)
+                    hit = curr_h >= ts
                 
                 if hit:
                     cs='sell' if p['posSide']=='long' else 'buy'
