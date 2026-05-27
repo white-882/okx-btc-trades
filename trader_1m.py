@@ -9,18 +9,20 @@ OKX_SECRET = os.environ["OKX_SECRET"]
 OKX_PASSPHRASE = os.environ["OKX_PASSPHRASE"]
 OKX_BASE = "https://www.okx.com"
 DEMO = False
-INST_ID = "BTC-USDT"  # 现货(最小0.00001BTC)
+INST_ID = "BTC-USDT-SWAP"  # 永续合约
 
 def okx_request(method, path, body=""):
     ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
     sign_str = ts + method.upper() + path + body
     sign = base64.b64encode(hmac.new(OKX_SECRET.encode(), sign_str.encode(), hashlib.sha256).digest()).decode()
+    
     headers = {
         'OK-ACCESS-KEY': OKX_API_KEY, 'OK-ACCESS-SIGN': sign,
         'OK-ACCESS-TIMESTAMP': ts, 'OK-ACCESS-PASSPHRASE': OKX_PASSPHRASE,
         'Content-Type': 'application/json'
     }
     if DEMO: headers['x-simulated-trading'] = '1'
+    
     url = OKX_BASE + path
     if method == 'GET':
         r = subprocess.run(['curl', '-s', url] + [f'-H{k}:{v}' for k,v in headers.items()],
@@ -33,24 +35,28 @@ def okx_request(method, path, body=""):
 
 def get_positions():
     r = okx_request('GET', f'/api/v5/account/positions?instId={INST_ID}')
-    if r['code'] == '0': return [p for p in r['data'] if float(p.get('pos',0)) > 0]
+    if r.get('code') == '0':
+        return [p for p in r.get('data',[]) if float(p.get('pos',0)) > 0]
     return []
 
 def get_balance():
     r = okx_request('GET', '/api/v5/account/balance')
-    if r['code'] == '0':
-        for d in r['data']:
+    if r.get('code') == '0':
+        for d in r.get('data',[]):
             for detail in d.get('details', []):
-                if detail['ccy'] == 'USDT': return float(detail.get('availBal', 0))
+                if detail['ccy'] == 'USDT':
+                    return float(detail.get('availBal', 0))
     return 0
 
 def place_order(side, sz):
-    body = json.dumps({'instId': INST_ID, 'tdMode': 'cash', 'side': side, 'ordType': 'market', 'sz': str(sz)})
+    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side,
+                        'ordType': 'market', 'sz': str(sz)})
     return okx_request('POST', '/api/v5/trade/order', body)
 
 def close_position(side, sz):
-    """现货卖出"""
-    body = json.dumps({'instId': INST_ID, 'tdMode': 'cash', 'side': 'sell', 'ordType': 'market', 'sz': str(sz)})
+    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side,
+                        'ordType': 'market', 'sz': str(sz),
+                        'posSide': 'long' if side == 'sell' else 'short'})
     return okx_request('POST', '/api/v5/trade/order', body)
 # ===== 获取1分钟K线 =====
 def fetch_1m_bars(limit=500):
@@ -74,11 +80,10 @@ def calc_size(bal,price,atr):
     atr_pct=atr/price
     pct=MAX_POS*min(2.0,VOL_TARGET/max(atr_pct,0.001))
     pct=max(MIN_POS,min(MAX_POS,pct))
-    # 现货: sz=BTC数量, 最小0.00001
-    btc_amount = round(bal * pct / price, 8)
-    btc_amount = max(btc_amount, 0.0001)  # 至少~$7.5
-    actual_pct = btc_amount * price / bal
-    return btc_amount, actual_pct
+    # 永续合约: 1张=0.01BTC, 账号561U开1张
+    contracts = 1  # 固定1张(资金不足时)
+    actual_pct = contracts * price * 0.01 / bal
+    return contracts, actual_pct
 
 def check_signal():
     df=fetch_1m_bars(500)
@@ -143,50 +148,53 @@ def check_signal():
     
     return last_signal
 
-# ===== 主程序(现货) =====
+# ===== 主程序(永续合约) =====
 def main():
     print(f"═══ V4 1m自适应 ═══")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     signal=check_signal()
+    positions=get_positions()
     balance=get_balance()
-    
-    # 查BTC持仓
-    r=okx_request('GET','/api/v5/account/balance')
-    btc_bal=0
-    if r.get('code')=='0':
-        for d in r['data']:
-            for det in d.get('details',[]):
-                if det['ccy']=='BTC': btc_bal=float(det.get('availBal',0))
     
     if signal:
         print(f"📡 {signal['direction']} @ {signal['price']:.1f} | OB:{signal['ob_bottom']:.0f}~{signal['ob_top']:.0f}")
     else:
         print("📡 无信号")
     
-    print(f"💰 {balance:.2f} USDT | BTC: {btc_bal:.6f}")
+    print(f"💰 {balance:.2f} USDT")
+    if positions:
+        for p in positions:
+            s='多' if p['posSide']=='long' else '空'
+            print(f"📊 {s} {float(p['pos']):.0f}张 @ {float(p['avgPx']):.1f} PnL={float(p['upl']):.2f}")
+    else:
+        print("📊 空仓")
     
-    has_btc=btc_bal>0.00001
-    if has_btc: print(f"📊 持币: {btc_bal:.6f} BTC")
-    else: print("📊 空仓")
+    # 信号反转
+    if signal and positions:
+        sd='long' if signal['direction']=='LONG' else 'short'
+        for p in positions:
+            if p['posSide']!=sd:
+                cs='sell' if p['posSide']=='long' else 'buy'
+                print(f"🔔 反转平仓")
+                r=close_position(cs,p['pos'])
+                if r.get('code')=='0':
+                    print("   ✅ 平仓")
+                    ep=signal['price']
+                    sz,pct=calc_size(balance,ep,0)
+                    r2=place_order('buy' if signal['direction']=='LONG' else 'sell',sz)
+                    if r2.get('code')=='0':
+                        print(f"   ✅ {signal['direction']} {sz}张")
+                    else:
+                        print(f"   ❌ {r2.get('msg','?')}")
     
-    # 信号反转/出场
-    if signal and has_btc:
-        if signal['direction']=='SHORT':
-            print(f"🔔 信号转空→卖币")
-            r=close_position('sell',btc_bal)
-            if r.get('code')=='0': print("   ✅ 已卖出")
-            else: print(f"   ❌ {r.get('msg','?')}")
-            has_btc=False
-    
-    elif signal and not has_btc:
-        if signal['direction']=='LONG':
-            ep=signal['price']; av=signal.get('atr',ep*0.005)
-            sz,pct=calc_size(balance,ep,av)
-            print(f"🔔 LONG 买{sz:.6f}BTC({pct*100:.0f}%) @ {ep:.1f}")
-            r=place_order('buy',sz)
-            if r.get('code')=='0': print("   ✅")
-            else: print(f"   ❌ {r.get('msg','?')}")
+    elif signal and not positions:
+        ep=signal['price']
+        sz,pct=calc_size(balance,ep,0)
+        print(f"🔔 {signal['direction']} {sz}张 @ {ep:.1f}")
+        r=place_order('buy' if signal['direction']=='LONG' else 'sell',sz)
+        if r.get('code')=='0': print("   ✅")
+        else: print(f"   ❌ {r.get('msg','?')}")
     
     print(f"\n下次: {datetime.now().strftime('%H:%M')} (每5分钟)")
 
