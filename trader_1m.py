@@ -249,4 +249,8 @@ def main():
     print(f"\n下次: {datetime.now().strftime('%H:%M')} (每5分钟)")
 
 if __name__=='__main__':
-    main()
+    # 每5分钟触发一次, 内部每分钟循环(共5次)
+    for run in range(5):
+        main()
+        if run < 4:
+            time.sleep(60)

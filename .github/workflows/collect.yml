@@ -18,6 +18,13 @@ jobs:
       - name: Collect DOM (30s)
         run: python3 okx_dom_collector.py
       
+      - name: V4 1m Adaptive Trade
+        env:
+          OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
+          OKX_SECRET: ${{ secrets.OKX_SECRET }}
+          OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+        run: python3 trader_1m.py
+      
       - name: Commit and push
         run: |
           git config user.name 'okx-collector[bot]'
