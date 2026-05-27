@@ -3,42 +3,54 @@
 import subprocess, json, time, hmac, base64, hashlib, os
 from datetime import datetime, timezone
 import pandas as pd, numpy as np
+# ===== OKX API (与smc_trader.py一致) =====
+OKX_API_KEY = os.environ["OKX_API_KEY"]
+OKX_SECRET = os.environ["OKX_SECRET"]
+OKX_PASSPHRASE = os.environ["OKX_PASSPHRASE"]
+OKX_BASE = "https://www.okx.com"
+DEMO = False
+INST_ID = "BTC-USDT-SWAP"
 
-# ===== OKX API =====
-OKX_KEY=os.environ["OKX_API_KEY"]; OKX_SECRET=os.environ["OKX_SECRET"].encode()
-OKX_PASS=os.environ["OKX_PASSPHRASE"]; DEMO=False; INST="BTC-USDT-SWAP"
-
-def okx_req(method, path, body=""):
-    ts=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]+'Z'
-    sign=base64.b64encode(hmac.new(OKX_SECRET,(ts+method.upper()+path+body).encode(),hashlib.sha256).digest()).decode()
-    hdrs={'OK-ACCESS-KEY':OKX_KEY,'OK-ACCESS-SIGN':sign,'OK-ACCESS-TIMESTAMP':ts,'OK-ACCESS-PASSPHRASE':OKX_PASS,'Content-Type':'application/json'}
-    if not DEMO: pass  # hdrs['x-simulated-trading']='1'
-    url=f"https://www.okx.com{path}"
-    cmd=['curl','-s','-X',method.upper()]+[f'-H{k}:{v}' for k,v in hdrs.items()]
-    if body: cmd+=['-d',body]
-    cmd.append(url)
-    r=subprocess.run(cmd,capture_output=True,text=True,timeout=15)
-    return json.loads(r.stdout) if r.stdout else {}
+def okx_request(method, path, body=""):
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    sign_str = ts + method.upper() + path + body
+    sign = base64.b64encode(hmac.new(OKX_SECRET.encode(), sign_str.encode(), hashlib.sha256).digest()).decode()
+    headers = {
+        'OK-ACCESS-KEY': OKX_API_KEY, 'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': ts, 'OK-ACCESS-PASSPHRASE': OKX_PASSPHRASE,
+        'Content-Type': 'application/json'
+    }
+    if DEMO: headers['x-simulated-trading'] = '1'
+    url = OKX_BASE + path
+    if method == 'GET':
+        r = subprocess.run(['curl', '-s', url] + [f'-H{k}:{v}' for k,v in headers.items()],
+                         capture_output=True, text=True, timeout=15)
+    else:
+        r = subprocess.run(['curl', '-s', '-X', method, url, '-d', body] +
+                         [f'-H{k}:{v}' for k,v in headers.items()],
+                         capture_output=True, text=True, timeout=15)
+    return json.loads(r.stdout)
 
 def get_positions():
-    r=okx_req('GET',f'/api/v5/account/positions?instId={INST}')
-    return [p for p in r.get('data',[]) if float(p.get('pos',0))>0] if r.get('code')=='0' else []
+    r = okx_request('GET', f'/api/v5/account/positions?instId={INST_ID}')
+    if r['code'] == '0': return [p for p in r['data'] if float(p.get('pos',0)) > 0]
+    return []
 
 def get_balance():
-    r=okx_req('GET','/api/v5/account/balance')
-    if r.get('code')=='0':
-        for d in r.get('data',[]):
-            for det in d.get('details',[]):
-                if det['ccy']=='USDT': return float(det.get('availBal',0))
+    r = okx_request('GET', '/api/v5/account/balance')
+    if r['code'] == '0':
+        for d in r['data']:
+            for detail in d.get('details', []):
+                if detail['ccy'] == 'USDT': return float(detail.get('availBal', 0))
     return 0
 
-def place_order(side,sz):
-    body=json.dumps({'instId':INST,'tdMode':'cross','side':side,'ordType':'market','sz':str(sz)})
-    return okx_req('POST','/api/v5/trade/order',body)
+def place_order(side, sz):
+    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side, 'ordType': 'market', 'sz': str(sz)})
+    return okx_request('POST', '/api/v5/trade/order', body)
 
-def close_position(side,sz):
-    body=json.dumps({'instId':INST,'tdMode':'cross','side':side,'ordType':'market','sz':str(sz),'posSide':'long' if side=='sell' else 'short'})
-    return okx_req('POST','/api/v5/trade/order',body)
+def close_position(side, sz):
+    body = json.dumps({'instId': INST_ID, 'tdMode': 'cross', 'side': side, 'ordType': 'market', 'sz': str(sz), 'posSide': 'long' if side == 'sell' else 'short'})
+    return okx_request('POST', '/api/v5/trade/order', body)
 
 # ===== 获取1分钟K线 =====
 def fetch_1m_bars(limit=500):
