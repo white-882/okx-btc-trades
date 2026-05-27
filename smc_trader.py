@@ -15,7 +15,7 @@ OKX_API_KEY = os.environ["OKX_API_KEY"]
 OKX_SECRET = os.environ["OKX_SECRET"]
 OKX_PASSPHRASE = os.environ["OKX_PASSPHRASE"]
 OKX_BASE = "https://www.okx.com"
-DEMO = True
+DEMO = False  # 实盘
 
 INST_ID = "BTC-USDT-SWAP"
 TRADE_SIZE_USDT = 100
