@@ -27,6 +27,10 @@ ATR_TRAIL = 2.5
 RSI_LONG_MAX = 60
 RSI_SHORT_MIN = 40
 
+# === 15分钟精调参数 ===
+ENTRY_DEPTH = 0.33      # 入场深度: LONG=OB区下方33%, SHORT=OB区上方33%
+SL_BUFFER = 0.2          # 止损缓冲区: OB边界外0.2%
+
 def okx_request(method, path, body=""):
     """OKX API 签名请求"""
     ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
@@ -183,20 +187,22 @@ def check_signal():
             fresh = (0 < i-lbu <= 50) or (0 < i-lcu <= 30)
             in_zone = rl <= sz_hi and rc >= sz_lo
             if fresh and in_zone and rsi_v <= RSI_LONG_MAX:
-                last_signal = ('LONG', rc, df['open_time'].iloc[i])
+                last_signal = {'direction': 'LONG', 'price': rc, 'time': df['open_time'].iloc[i],
+                               'ob_top': sz_hi, 'ob_bottom': sz_lo, 'invalidation': inv_l}
         
         if trend == -1 and not np.isnan(rz_hi):
             fresh = (0 < i-lbd <= 50) or (0 < i-lcd <= 30)
             in_zone = rh >= rz_lo and rc <= rz_hi
             if fresh and in_zone and rsi_v >= RSI_SHORT_MIN:
-                last_signal = ('SHORT', rc, df['open_time'].iloc[i])
+                last_signal = {'direction': 'SHORT', 'price': rc, 'time': df['open_time'].iloc[i],
+                               'ob_top': rz_hi, 'ob_bottom': rz_lo, 'invalidation': inv_s}
     
     # === 核心修改: 当前未完成K线也检查 ===
     # 主循环已经跑了所有历史K线(含当前未完成K线), last_signal 可能是旧信号
     # 现在检查最新一根K(当前进行中的)是否已触碰到OB区
     
     # 如果已有信号且是最近几根K产生的，直接用
-    if last_signal and (n - 1 - [i for i in range(n) if df['open_time'].iloc[i] == last_signal[2]][0] <= 3):
+    if last_signal and (n - 1 - [i for i in range(n) if df['open_time'].iloc[i] == last_signal['time']][0] <= 3):
         return last_signal
     
     # 否则检查当前K线是否"正在进行中"触碰OB区
@@ -216,15 +222,97 @@ def check_signal():
             # 当前K最低点或当前价碰到OB区就算
             mid_touch = (rl <= sz_hi) or (rc <= sz_hi + (sz_hi - sz_lo) * 0.3)
             if fresh and mid_touch and rsi_v <= RSI_LONG_MAX:
-                return ('LONG', rc, df['open_time'].iloc[i])
+                return {'direction': 'LONG', 'price': rc, 'time': df['open_time'].iloc[i],
+                        'ob_top': sz_hi, 'ob_bottom': sz_lo, 'invalidation': inv_l}
         
         if trend == -1 and not np.isnan(rz_hi):
             fresh = (0 < i-lbd <= 50) or (0 < i-lcd <= 30)
             mid_touch = (rh >= rz_lo) or (rc >= rz_lo - (rz_hi - rz_lo) * 0.3)
             if fresh and mid_touch and rsi_v >= RSI_SHORT_MIN:
-                return ('SHORT', rc, df['open_time'].iloc[i])
+                return {'direction': 'SHORT', 'price': rc, 'time': df['open_time'].iloc[i],
+                        'ob_top': rz_hi, 'ob_bottom': rz_lo, 'invalidation': inv_s}
     
     return last_signal
+
+def fetch_15m_data():
+    """拉取15分钟K线(最近96根=24小时)"""
+    try:
+        url = 'https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=BTC_USDT&interval=15m&limit=96'
+        r = subprocess.run(['curl', '-s', url], capture_output=True, text=True, timeout=20)
+        data = json.loads(r.stdout)
+    except:
+        return None
+    if not isinstance(data, list) or len(data) < 20:
+        return None
+    
+    rows = []
+    for p in data:
+        rows.append({'open_time': int(p[0]), 'open': float(p[5]),
+                     'high': float(p[3]), 'low': float(p[4]), 'close': float(p[2])})
+    df = pd.DataFrame(rows).sort_values('open_time').reset_index(drop=True)
+    for c in ['open','high','low','close']: df[c] = df[c].astype(float)
+    return df
+
+def find_15m_entry(signal):
+    """
+    4H信号确认后，在15分钟K线里找最优入场点。
+    LONG: 等价格回踩OB区下半部(0~33%) → 入场，止损=OB底-缓冲
+    SHORT: 等价格反弹OB区上半部(67~100%) → 入场，止损=OB顶+缓冲
+    返回: {'entry': 价格, 'stop': 止损价} 或 None(还没到位)
+    """
+    df15 = fetch_15m_data()
+    if df15 is None:
+        return None
+    
+    direction = signal['direction']
+    ob_top = signal['ob_top']
+    ob_bottom = signal['ob_bottom']
+    ob_range = ob_top - ob_bottom
+    
+    if ob_range <= 0:
+        return None
+    
+    # 最近15m价格
+    current = df15['close'].iloc[-1]
+    current_low = df15['low'].iloc[-1]
+    current_high = df15['high'].iloc[-1]
+    
+    # 15m ATR
+    high = df15['high'].values; low = df15['low'].values; close = df15['close'].values
+    tr = np.maximum(high - low, np.maximum(np.abs(high - np.roll(close,1)), np.abs(low - np.roll(close,1))))
+    tr[0] = high[0] - low[0]
+    atr15 = pd.Series(tr).ewm(alpha=2/15, adjust=False).mean().values[-1]
+    
+    if direction == 'LONG':
+        # 入场目标: OB区下33% (ob_bottom + ob_range*0.33)
+        target_entry = ob_bottom + ob_range * ENTRY_DEPTH
+        # 止损: OB底下方 + ATR缓冲
+        stop_loss = ob_bottom - atr15 * 0.5 - ob_range * SL_BUFFER / 100
+        
+        # 价格是否已经进入目标区?
+        in_target_zone = current <= target_entry or current_low <= target_entry
+        
+        if in_target_zone:
+            # 入场: 当前价, 如果更低用最低价
+            entry_price = min(current, target_entry)
+            return {'entry': entry_price, 'stop': stop_loss, 'atr': atr15}
+        else:
+            # 还没到目标区，记录等待
+            return {'waiting': True, 'target': target_entry, 'current': current, 'stop': stop_loss}
+    
+    else:  # SHORT
+        # 入场目标: OB区上67% (ob_top - ob_range*0.33)
+        target_entry = ob_top - ob_range * ENTRY_DEPTH
+        # 止损: OB顶上方 + ATR缓冲
+        stop_loss = ob_top + atr15 * 0.5 + ob_range * SL_BUFFER / 100
+        
+        in_target_zone = current >= target_entry or current_high >= target_entry
+        
+        if in_target_zone:
+            entry_price = max(current, target_entry)
+            return {'entry': entry_price, 'stop': stop_loss, 'atr': atr15}
+        else:
+            return {'waiting': True, 'target': target_entry, 'current': current, 'stop': stop_loss}
 
 def main():
     print(f"═══ SMC v4 交易机器人 ═══")
@@ -234,10 +322,20 @@ def main():
     # 1. 检查信号
     signal = check_signal()
     if signal:
-        direction, price, ts = signal
-        print(f"📡 信号: {direction} @ {price:.1f} ({ts})")
+        print(f"📡 4H信号: {signal['direction']} @ {signal['price']:.1f}")
+        print(f"   OB区: {signal['ob_bottom']:.1f} ~ {signal['ob_top']:.1f}")
+        
+        # 15分钟精调入场
+        entry_15m = find_15m_entry(signal)
+        if entry_15m:
+            if entry_15m.get('waiting'):
+                print(f"   ⏳ 等15m入场: 目标{entry_15m['target']:.1f} 当前{entry_15m['current']:.1f} 止损{entry_15m['stop']:.1f}")
+            else:
+                print(f"   ✅ 15m入场: {entry_15m['entry']:.1f} 止损: {entry_15m['stop']:.1f}")
+        else:
+            print(f"   ⚠️ 15m数据异常, 用4H信号价入场")
     else:
-        print("📡 无信号")
+        print("📡 无4H信号")
     
     # 2. 当前持仓
     positions = get_positions()
@@ -253,22 +351,24 @@ def main():
     
     # 3. 执行
     if signal and positions:
-        # 检查是否方向相反
-        sig_dir = 'long' if signal[0] == 'LONG' else 'short'
+        sig_dir = 'long' if signal['direction'] == 'LONG' else 'short'
         for p in positions:
             if p['posSide'] != sig_dir:
-                # 方向反转 → 平仓+反向开仓
                 close_side = 'sell' if p['posSide'] == 'long' else 'buy'
                 print(f"\n🔔 反转: {'多→空' if p['posSide']=='long' else '空→多'}")
                 r = close_position(close_side, p['pos'])
                 if r['code'] == '0':
                     print(f"   ✅ 已平仓")
-                    # 开反向
-                    price = signal[1]
-                    sz = round(TRADE_SIZE_USDT / price, 4)
-                    r2 = place_order('buy' if signal[0] == 'LONG' else 'sell', sz)
+                    # 用15m精调入场
+                    if entry_15m and not entry_15m.get('waiting'):
+                        entry_price = entry_15m['entry']
+                        print(f"   🎯 15m精调入: {entry_price:.1f} (止损{entry_15m['stop']:.1f})")
+                    else:
+                        entry_price = signal['price']
+                    sz = round(TRADE_SIZE_USDT / entry_price, 4)
+                    r2 = place_order('buy' if signal['direction'] == 'LONG' else 'sell', sz)
                     if r2['code'] == '0':
-                        print(f"   ✅ 反向开仓: {signal[0]} {sz}张 市价")
+                        print(f"   ✅ 反向开仓: {signal['direction']} {sz}张 @ {entry_price:.1f}")
                     else:
                         print(f"   ❌ 反向开仓失败: {r2.get('msg','?')}")
                 else:
@@ -277,15 +377,24 @@ def main():
                 print(f"\n📌 方向一致，持仓不变")
     
     elif signal and not positions:
-        # 开仓
-        print(f"\n🔔 开仓: {signal[0]}")
-        price = signal[1]
-        sz = round(TRADE_SIZE_USDT / price, 4)
-        r = place_order('buy' if signal[0] == 'LONG' else 'sell', sz)
-        if r['code'] == '0':
-            print(f"   ✅ 已下单: {signal[0]} {sz}张 市价")
+        # 15m精调入场
+        if entry_15m and not entry_15m.get('waiting'):
+            entry_price = entry_15m['entry']
+            print(f"\n🎯 15m精调入: {entry_price:.1f} (止损{entry_15m['stop']:.1f})")
+        elif entry_15m and entry_15m.get('waiting'):
+            print(f"\n⏳ 15m还没到位(当前{entry_15m['current']:.1f} 目标{entry_15m['target']:.1f}), 等下次检查")
+            entry_price = None
         else:
-            print(f"   ❌ 下单失败: {r.get('msg','?')}")
+            entry_price = signal['price']
+        
+        if entry_price:
+            print(f"🔔 开仓: {signal['direction']}")
+            sz = round(TRADE_SIZE_USDT / entry_price, 4)
+            r = place_order('buy' if signal['direction'] == 'LONG' else 'sell', sz)
+            if r['code'] == '0':
+                print(f"   ✅ 已下单: {signal['direction']} {sz}张 市价")
+            else:
+                print(f"   ❌ 下单失败: {r.get('msg','?')}")
     
     elif not signal and positions:
         # 信号消失 → 平仓
