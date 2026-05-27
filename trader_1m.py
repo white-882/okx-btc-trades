@@ -62,7 +62,8 @@ def calc_size(bal,price,atr):
     atr_pct=atr/price
     pct=MAX_POS*min(2.0,VOL_TARGET/max(atr_pct,0.001))
     pct=max(MIN_POS,min(MAX_POS,pct))
-    return round(bal*pct/price,4), pct
+    sz=max(round(bal*pct/price,4), 0.01)  # OKX最小0.01张
+    return sz, pct
 
 def check_signal():
     df=fetch_1m_bars(500)
