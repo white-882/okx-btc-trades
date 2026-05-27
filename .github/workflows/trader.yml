@@ -9,6 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install pandas numpy
       - name: Run SMC v4 Trader
         env:
           OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
