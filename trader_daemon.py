@@ -10,7 +10,7 @@ OKX_PASS = os.environ["OKX_PASSPHRASE"]
 DEMO = False
 INST = "BTC-USDT-SWAP"
 SWING=200; ATR_T=2.5; RSI_L=60; RSI_S=40
-RUN_HOURS=5.5; MAX_POS=0.20; MIN_POS=0.02; VOL_T=0.015
+RUN_HOURS=0.9; MAX_POS=0.20; MIN_POS=0.02; VOL_T=0.015
 
 def okx_req(method, path, body=""):
     ts=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]+'Z'
