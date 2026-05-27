@@ -1,7 +1,7 @@
 name: V4 1m Adaptive Trader
 on:
   schedule:
-    - cron: '0,5,10,15,20,25,30,35,40,45,50,55 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
