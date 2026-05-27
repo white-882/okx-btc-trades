@@ -388,7 +388,7 @@ def main():
     
     # V4引擎: 不放信号消失平仓 — 持仓等趋势反转或止损
     
-    print(f"\n下次: {datetime.now().strftime('%H:%M')} (每小时)")
+    print(f"\n下次: {datetime.now().strftime('%H:%M')} (每15分钟)")
     print("V4引擎: 动态仓位 | 纯移动止损 | 趋势反转才出")
 
 if __name__ == '__main__':
