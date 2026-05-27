@@ -345,7 +345,45 @@ def main():
     else:
         print(f"📊 持仓: 空仓")
     
-    # 3. 执行 (V4引擎逻辑: 反转才平仓, 不放信号消失平仓)
+    # 3. V4移动止损检查 (每15分钟, 有持仓就检查)
+    if positions:
+        # 拉当前4H数据算移动止损位
+        try:
+            url = 'https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=BTC_USDT&interval=4h&limit=5'
+            r = subprocess.run(['curl', '-s', url], capture_output=True, text=True, timeout=15)
+            recent = json.loads(r.stdout)
+            if isinstance(recent, list) and len(recent) >= 2:
+                curr_price = float(recent[0][2])
+                curr_low = float(recent[0][4])
+                curr_high = float(recent[0][3])
+                
+                for p in positions:
+                    inv = signal.get('invalidation', 0) if signal else 0
+                    av = signal.get('atr', curr_price * 0.02) if signal else curr_price * 0.02
+                    
+                    if p['posSide'] == 'long':
+                        ts = max(inv, curr_price - ATR_TRAIL * av) if inv else curr_price - ATR_TRAIL * av
+                        hit = curr_low <= ts
+                    else:
+                        ts = min(inv, curr_price + ATR_TRAIL * av) if inv else curr_price + ATR_TRAIL * av
+                        hit = curr_high >= ts
+                    
+                    if hit:
+                        close_side = 'sell' if p['posSide'] == 'long' else 'buy'
+                        print(f"\n🛑 V4移动止损触发: {'多' if p['posSide']=='long' else '空'} @ {ts:.1f}")
+                        r = close_position(close_side, p['pos'])
+                        if r['code'] == '0':
+                            print(f"   ✅ 已平仓")
+                            positions = [x for x in positions if x != p]
+                        else:
+                            print(f"   ❌ 平仓失败: {r.get('msg','?')}")
+                    else:
+                        side = '多' if p['posSide'] == 'long' else '空'
+                        print(f"📌 V4移动止损: {side} 止损@{ts:.1f}")
+        except Exception as e:
+            print(f"   ⚠️ 止损检查异常: {e}")
+    
+    # 4. 信号执行
     if signal and positions:
         sig_dir = 'long' if signal['direction'] == 'LONG' else 'short'
         for p in positions:
