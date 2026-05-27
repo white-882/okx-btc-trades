@@ -1,31 +1,22 @@
 //@version=5
-// V4 Adaptive SMC Engine - 1min/5min OKX BTC-USDT-SWAP
-// Copy-paste to TradingView, set alert webhook to OKX
+strategy("V4 SMC", overlay=true, initial_capital=2000, default_qty_type=strategy.percent_of_equity, default_qty_value=20, commission_type=strategy.commission.percent, commission_value=0.05)
 
-strategy("V4 Adaptive SMC", overlay=true, initial_capital=2000, default_qty_type=strategy.percent_of_equity, default_qty_value=20, commission_type=strategy.commission.percent, commission_value=0.05)
+swing_base = input.int(200, "Swing Base", 50, 500)
+atr_trail = input.float(2.5, "ATR Trail", 0.5, 5.0, 0.5)
+rsi_long = input.int(60, "RSI Long Max", 40, 80)
+rsi_short = input.int(40, "RSI Short Min", 20, 60)
+max_pos = input.float(0.20, "Max Position %", 0.05, 0.50)
+use_adx = input.bool(true, "Adaptive ADX")
 
-// ===== Parameters =====
-swing_base = input.int(200, "Swing Base", minval=50, maxval=500)
-atr_trail  = input.float(2.5, "ATR Trail", minval=0.5, maxval=5.0, step=0.5)
-rsi_long   = input.int(60, "RSI Long Max", minval=40, maxval=80)
-rsi_short  = input.int(40, "RSI Short Min", minval=20, maxval=60)
-max_pos    = input.float(0.20, "Max Position %", minval=0.05, maxval=0.50)
-use_adx    = input.bool(true, "Adaptive Swing (ADX)")
-
-// ===== Indicators =====
 atr = ta.ema(ta.tr, 14)
 rsi = ta.rsi(close, 14)
-adx_val = ta.adx(high, low, close, 14)
-
-// Adaptive swing
+[dip, dim, adx_val] = ta.dmi(14, 14)
 adaptive_swing = use_adx ? int(math.max(120, math.min(280, swing_base + 50 - 2 * (adx_val - 20)))) : swing_base
 
-// ===== Swing Detection =====
 var float sw_high = na
 var float sw_low = na
 var bool sw_hc = true
 var bool sw_lc = true
-
 sw = adaptive_swing
 if bar_index >= sw
     if high[sw] > ta.highest(high, sw)
@@ -35,7 +26,6 @@ if bar_index >= sw
         sw_low := low
         sw_lc := false
 
-// ===== BOS (Break of Structure) =====
 var int trend = 0
 var float ob_top = na
 var float ob_bottom = na
@@ -45,7 +35,6 @@ var int lbd = -999
 var int lcu = -999
 var int lcd = -999
 
-// BOS Long
 if not sw_hc and not na(sw_high) and close[1] <= sw_high and close > sw_high
     sw_hc := true
     if trend == -1
@@ -57,7 +46,6 @@ if not sw_hc and not na(sw_high) and close[1] <= sw_high and close > sw_high
     invalidation := na(sw_low) ? sw_high - 3 * atr : sw_low
     trend := 1
 
-// BOS Short
 if not sw_lc and not na(sw_low) and close[1] >= sw_low and close < sw_low
     sw_lc := true
     if trend == 1
@@ -69,52 +57,43 @@ if not sw_lc and not na(sw_low) and close[1] >= sw_low and close < sw_low
     invalidation := na(sw_high) ? sw_low + 3 * atr : sw_high
     trend := -1
 
-// ===== Entry Conditions =====
-fresh_long  = (bar_index - lbu > 0 and bar_index - lbu <= 50) or (bar_index - lcu > 0 and bar_index - lcu <= 30)
+fresh_long = (bar_index - lbu > 0 and bar_index - lbu <= 50) or (bar_index - lcu > 0 and bar_index - lcu <= 30)
 fresh_short = (bar_index - lbd > 0 and bar_index - lbd <= 50) or (bar_index - lcd > 0 and bar_index - lcd <= 30)
-waited_long  = (bar_index - lbu >= 1) and (bar_index - lcu >= 1)
+waited_long = (bar_index - lbu >= 1) and (bar_index - lcu >= 1)
 waited_short = (bar_index - lbd >= 1) and (bar_index - lcd >= 1)
 
-long_signal  = trend == 1 and fresh_long and waited_long and low <= ob_top and close >= ob_bottom and rsi <= rsi_long
+long_signal = trend == 1 and fresh_long and waited_long and low <= ob_top and close >= ob_bottom and rsi <= rsi_long
 short_signal = trend == -1 and fresh_short and waited_short and high >= ob_bottom and close <= ob_top and rsi >= rsi_short
 
-// ===== Position Sizing =====
 atr_pct = atr / close
 pos_pct = max_pos * math.min(2.0, 0.015 / math.max(atr_pct, 0.001))
 pos_pct := math.max(0.02, math.min(max_pos, pos_pct))
 
-// ===== Trailing Stop =====
 var float trail_stop = na
-var float entry_price = na
 
 if strategy.position_size == 0
     if long_signal
-        entry_price := close
         trail_stop := na(invalidation) ? close - 2 * atr : invalidation - 0.5 * atr
-        strategy.entry("LONG", strategy.long, qty=strategy.equity * pos_pct / close)
+        strategy.entry("L", strategy.long, qty=strategy.equity * pos_pct / close)
     if short_signal
-        entry_price := close
         trail_stop := na(invalidation) ? close + 2 * atr : invalidation + 0.5 * atr
-        strategy.entry("SHORT", strategy.short, qty=strategy.equity * pos_pct / close)
+        strategy.entry("S", strategy.short, qty=strategy.equity * pos_pct / close)
 
-// Update trailing stop
 if strategy.position_size > 0
     trail_stop := math.max(trail_stop, na(invalidation) ? trail_stop : invalidation)
     trail_stop := math.max(trail_stop, close - atr_trail * atr)
-    strategy.exit("TSL", "LONG", stop=trail_stop)
+    strategy.exit("XL", "L", stop=trail_stop)
 
 if strategy.position_size < 0
     trail_stop := math.min(trail_stop, na(invalidation) ? trail_stop : invalidation)
     trail_stop := math.min(trail_stop, close + atr_trail * atr)
-    strategy.exit("TSS", "SHORT", stop=trail_stop)
+    strategy.exit("XS", "S", stop=trail_stop)
 
-// ===== Trend Reversal Exit =====
 if strategy.position_size > 0 and short_signal
-    strategy.close("LONG", comment="Reverse")
+    strategy.close("L", comment="Rev")
 if strategy.position_size < 0 and long_signal
-    strategy.close("SHORT", comment="Reverse")
+    strategy.close("S", comment="Rev")
 
-// ===== Visual =====
-plot(ob_top, "OB Top", color=color.new(color.green, 70), style=plot.style_circles)
-plot(ob_bottom, "OB Bottom", color=color.new(color.red, 70), style=plot.style_circles)
-plot(trail_stop, "Trail", color=color.orange, linewidth=1)
+plot(ob_top, "OB Top", color=color.new(color.green, 70))
+plot(ob_bottom, "OB Bot", color=color.new(color.red, 70))
+plot(trail_stop, "Stop", color=color.orange)
