@@ -185,6 +185,35 @@ def main():
     else:
         print("📊 空仓")
     
+    # ==== V4移动止损(每5分钟检查, 有持仓必查) ====
+    if positions:
+        df=fetch_1m_bars(5)
+        if df is not None and len(df)>=2:
+            curr=df['c'].iloc[-1]; curr_l=df['l'].iloc[-1]; curr_h=df['h'].iloc[-1]
+            inv=signal.get('inv',0) if signal else 0
+            av=signal.get('atr',curr*0.002) if signal else curr*0.002
+            
+            for p in positions:
+                if p['posSide']=='long':
+                    ts=max(inv, curr-ATR_T*av) if inv else curr-ATR_T*av
+                    hit=curr_l<=ts
+                else:
+                    ts=min(inv, curr+ATR_T*av) if inv else curr+ATR_T*av
+                    hit=curr_h>=ts
+                
+                if hit:
+                    cs='sell' if p['posSide']=='long' else 'buy'
+                    print(f"🛑 V4移动止损触发 @ {ts:.1f}")
+                    r=close_position(cs, p['pos'])
+                    if r.get('code') == '0':
+                        print(f"   ✅ 已平仓")
+                        positions=[x for x in positions if x!=p]
+                    else:
+                        print(f"   ❌ {r.get('msg','?')}")
+                else:
+                    side_lbl='多' if p['posSide']=='long' else '空'
+                    print(f"📌 移动止损: {side_lbl} → {ts:.1f}")
+    
     # 信号反转
     if signal and positions:
         sd='long' if signal['direction']=='LONG' else 'short'
