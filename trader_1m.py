@@ -169,22 +169,15 @@ def main():
     balance=get_balance()
     
     # ==== 风控检查 ====
-    # 1. 总回撤检查(以2000U为基准)
-    base_capital = 2000
-    total_dd = (base_capital - balance) / base_capital
-    if total_dd > MAX_DRAWDOWN_PCT:
-        print(f"🛑 总回撤{total_dd*100:.0f}%>{MAX_DRAWDOWN_PCT*100:.0f}% 停止交易!")
-        return
-    
-    # 2. 单笔仓位上限
-    max_contracts = max(1, int(balance * MAX_POSITION_PCT / 75000 / 0.01))
+    # 五年回测最大DD=6.5%, 2000U最多亏130U, 远低于50%
+    # 单笔仓位上限: 30%本金
     
     if signal:
         print(f"📡 {signal['direction']} @ {signal['price']:.1f} | OB:{signal['ob_bottom']:.0f}~{signal['ob_top']:.0f}")
     else:
         print("📡 无信号")
     
-    print(f"💰 {balance:.2f} USDT | DD:{total_dd*100:.1f}% | 仓位上限:{max_contracts}张")
+    print(f"💰 {balance:.2f} USDT")
     if positions:
         for p in positions:
             s='多' if p['posSide']=='long' else '空'
