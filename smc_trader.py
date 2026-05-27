@@ -191,6 +191,39 @@ def check_signal():
             if fresh and in_zone and rsi_v >= RSI_SHORT_MIN:
                 last_signal = ('SHORT', rc, df['open_time'].iloc[i])
     
+    # === 核心修改: 当前未完成K线也检查 ===
+    # 主循环已经跑了所有历史K线(含当前未完成K线), last_signal 可能是旧信号
+    # 现在检查最新一根K(当前进行中的)是否已触碰到OB区
+    
+    # 如果已有信号且是最近几根K产生的，直接用
+    if last_signal and (n - 1 - [i for i in range(n) if df['open_time'].iloc[i] == last_signal[2]][0] <= 3):
+        return last_signal
+    
+    # 否则检查当前K线是否"正在进行中"触碰OB区
+    # 判断当前K是否未完成: 4H K线如果open_time距今<4H，就是进行中
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    last_open = int(df['open_time'].iloc[-1].timestamp())
+    is_current_candle = (now_ts - last_open) < 14400  # 4H = 14400秒
+    
+    if is_current_candle:
+        i = n - 1
+        rc, rl, rh = close[i], low[i], high[i]
+        rsi_v = rsi_vals[i] if not np.isnan(rsi_vals[i]) else 50
+        
+        # 用当前已形成的最高/最低判断，不等到收盘
+        if trend == 1 and not np.isnan(sz_hi):
+            fresh = (0 < i-lbu <= 50) or (0 < i-lcu <= 30)
+            # 当前K最低点或当前价碰到OB区就算
+            mid_touch = (rl <= sz_hi) or (rc <= sz_hi + (sz_hi - sz_lo) * 0.3)
+            if fresh and mid_touch and rsi_v <= RSI_LONG_MAX:
+                return ('LONG', rc, df['open_time'].iloc[i])
+        
+        if trend == -1 and not np.isnan(rz_hi):
+            fresh = (0 < i-lbd <= 50) or (0 < i-lcd <= 30)
+            mid_touch = (rh >= rz_lo) or (rc >= rz_lo - (rz_hi - rz_lo) * 0.3)
+            if fresh and mid_touch and rsi_v >= RSI_SHORT_MIN:
+                return ('SHORT', rc, df['open_time'].iloc[i])
+    
     return last_signal
 
 def main():
@@ -265,7 +298,7 @@ def main():
             else:
                 print(f"   ❌ 平仓失败: {r.get('msg','?')}")
     
-    print(f"\n下一次检查: {datetime.now().strftime('%H:%M')} (cron每4H)")
+    print(f"\n下一次检查: {datetime.now().strftime('%H:%M')} (cron每小时)")
 
 if __name__ == '__main__':
     main()
