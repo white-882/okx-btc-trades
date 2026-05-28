@@ -60,17 +60,16 @@ def check_signal():
     delta=pd.Series(C).diff(); gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False).mean().values
     lss=(-delta).clip(lower=0).ewm(alpha=1/14,adjust=False).mean().values; rsi=100-100/(1+gain/(lss+1e-10))
     
-    sw_hl=np.nan; sw_ll=np.nan; sw_hc=True; sw_lc=True; trend=0
-    sz_hi=np.nan; sz_lo=np.nan; rz_hi=np.nan; rz_lo=np.nan
-    inv_l=np.nan; inv_s=np.nan; lbu=-999; lbd=-999; lcu=-999; lcd=-999; ls=None
-    
-    # 完整leg数组(与回测一致)
     leg=np.zeros(n,dtype=int)
     for i in range(SWING,n):
         if H[i-SWING]>np.max(H[i-SWING+1:i+1]): leg[i]=0
         elif L[i-SWING]<np.min(L[i-SWING+1:i+1]): leg[i]=1
         else: leg[i]=leg[i-1]
     dleg=np.diff(leg,prepend=leg[0]); sw_high,sw_low=dleg==-1,dleg==1
+    
+    sw_hl=np.nan; sw_ll=np.nan; sw_hc=True; sw_lc=True; trend=0
+    sz_hi=np.nan; sz_lo=np.nan; rz_hi=np.nan; rz_lo=np.nan
+    inv_l=np.nan; inv_s=np.nan; lbu=-999; lbd=-999; lcu=-999; lcd=-999; ls=None
     
     for i in range(SWING,n):
         rh,rl,rc=H[i],L[i],C[i]; av=atr[i]; rv=rsi[i] if not np.isnan(rsi[i]) else 50
@@ -81,16 +80,23 @@ def check_signal():
             sw_hc=True
             if trend==-1: lcu=i
             else: lbu=i
-            sz_hi=H[i]; sz_lo=min(L[max(0,i-50):i+1]); inv_l=sw_ll if not np.isnan(sw_ll) else sw_hl-3*av; trend=1
+            oi=max(0,i-SWING)+np.argmin(L[max(0,i-SWING):i+1]); sz_hi=H[oi]; sz_lo=L[oi]
+            inv_l=sw_ll if not np.isnan(sw_ll) else sw_hl-3*av; trend=1
         if not sw_lc and not np.isnan(sw_ll) and pv>=sw_ll and rc<sw_ll:
             sw_lc=True
             if trend==1: lcd=i
             else: lbd=i
-            rz_hi=max(H[max(0,i-50):i+1]); rz_lo=L[i]; inv_s=sw_hl if not np.isnan(sw_hl) else sw_ll+3*av; trend=-1
-        if trend==1 and not np.isnan(sz_hi) and rl<=sz_hi and rc>=sz_lo and rv<=RSI_L:
-            ls={'direction':'LONG','price':rc,'ob_top':sz_hi,'ob_bottom':sz_lo,'inv':inv_l,'atr':av}
-        if trend==-1 and not np.isnan(rz_hi) and rh>=rz_lo and rc<=rz_hi and rv>=RSI_S:
-            ls={'direction':'SHORT','price':rc,'ob_top':rz_hi,'ob_bottom':rz_lo,'inv':inv_s,'atr':av}
+            oi=max(0,i-SWING)+np.argmax(H[max(0,i-SWING):i+1]); rz_hi=H[oi]; rz_lo=L[oi]
+            inv_s=sw_hl if not np.isnan(sw_hl) else sw_ll+3*av; trend=-1
+        # 入场: 需要fresh+waited(与回测完全一致)
+        if trend==1 and not np.isnan(sz_hi):
+            fresh=(0<i-lbu<=50); waited=(i-lbu>=1)and(i-lcu>=1)
+            if fresh and waited and rl<=sz_hi and rc>=sz_lo and rv<=RSI_L:
+                ls={'direction':'LONG','price':rc,'ob_top':sz_hi,'ob_bottom':sz_lo,'inv':inv_l,'atr':av}
+        if trend==-1 and not np.isnan(rz_hi):
+            fresh=(0<i-lbd<=50); waited=(i-lbd>=1)and(i-lcd>=1)
+            if fresh and waited and rh>=rz_lo and rc<=rz_hi and rv>=RSI_S:
+                ls={'direction':'SHORT','price':rc,'ob_top':rz_hi,'ob_bottom':rz_lo,'inv':inv_s,'atr':av}
     return ls
 
 def calc_size(bal,price,atr):
