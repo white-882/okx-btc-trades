@@ -9,7 +9,7 @@ OKX_SECRET = os.environ["OKX_SECRET"]
 OKX_PASS = os.environ["OKX_PASSPHRASE"]
 DEMO = False
 INST = "BTC-USDT-SWAP"
-SWING=200; ATR_T=2.5; RSI_L=60; RSI_S=40
+SWING=200; ATR_T=10.0; RSI_L=60; RSI_S=40
 RUN_HOURS=0.9; MAX_POS=0.20; MIN_POS=0.02; VOL_T=0.015
 
 def okx_req(method, path, body=""):
