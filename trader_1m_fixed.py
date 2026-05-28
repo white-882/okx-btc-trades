@@ -31,12 +31,9 @@ def okx_request(method, path, body=""):
         r = subprocess.run(['curl', '-s', '-X', method, url, '-d', body] +
                          [f'-H{k}:{v}' for k,v in headers.items()],
                          capture_output=True, text=True, timeout=15)
-    if not r.stdout.strip():
-        return {'code': '-1', 'msg': 'OKX API unreachable (network block)', 'data': []}
-    try:
-        return json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return {'code': '-1', 'msg': f'Invalid JSON', 'data': []}
+    if not r.stdout or not r.stdout.strip():
+        return {"code":"-1","msg":"Empty response","data":[]}
+    return json.loads(r.stdout)
 
 def get_positions():
     r = okx_request('GET', f'/api/v5/account/positions?instId={INST_ID}')
@@ -51,7 +48,7 @@ def get_balance():
             for detail in d.get('details', []):
                 if detail['ccy'] == 'USDT':
                     return float(detail.get('availBal', 0))
-    return -1  # API unreachable
+    return 0
 
 def place_order(side, sz, pos_side=None):
     """pos_side: 'long' or 'short' for perpetual"""
@@ -79,7 +76,8 @@ def fetch_1m_bars(limit=500):
             rows.append({'t':int(p[0]),'o':float(p[5]),'h':float(p[3]),'l':float(p[4]),'c':float(p[2]),'v':float(p[1])})
         df=pd.DataFrame(rows).sort_values('t').reset_index(drop=True)
         return df
-    except: return None
+    except Exception as e:
+        return {"code":"-1","msg":str(e),"data":[]} return None
 
 # ===== V4自适应引擎 =====
 SWING_BASE=200; ATR_T=2.5; RSI_L=60; RSI_S=40
@@ -182,10 +180,7 @@ def main():
     else:
         print("📡 无信号")
     
-    if balance < 0:
-        print("💰 OKX API不可达（IP被封锁）")
-    else:
-        print(f"💰 {balance:.2f} USDT")
+    print(f"💰 {balance:.2f} USDT")
     if positions:
         for p in positions:
             s='多' if p['posSide']=='long' else '空'
@@ -244,7 +239,7 @@ def main():
                     else:
                         print(f"   ❌ {r2.get('msg','?')}")
     
-    elif signal and not positions and balance > 0:
+    elif signal and not positions:
         ep=signal['price']
         sz,pct=calc_size(balance,ep,0)
         print(f"🔔 {signal['direction']} {sz}张 @ {ep:.1f}")
@@ -254,8 +249,6 @@ def main():
         if r.get('code') == '0': print("   ✅")
         else: print(f"   ❌ {r.get('msg',str(r)[:100])}")
     
-    if signal and not positions and balance < 0:
-        print(f"🔔 信号: {signal['direction']} @ {signal['price']:.1f} | 无法下单(OKX不可达)")
     print(f"\n下次: {datetime.now().strftime('%H:%M')} (每5分钟)")
 
 if __name__=='__main__':

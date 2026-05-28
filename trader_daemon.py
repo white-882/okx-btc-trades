@@ -64,11 +64,18 @@ def check_signal():
     sz_hi=np.nan; sz_lo=np.nan; rz_hi=np.nan; rz_lo=np.nan
     inv_l=np.nan; inv_s=np.nan; lbu=-999; lbd=-999; lcu=-999; lcd=-999; ls=None
     
+    # 完整leg数组(与回测一致)
+    leg=np.zeros(n,dtype=int)
+    for i in range(SWING,n):
+        if H[i-SWING]>np.max(H[i-SWING+1:i+1]): leg[i]=0
+        elif L[i-SWING]<np.min(L[i-SWING+1:i+1]): leg[i]=1
+        else: leg[i]=leg[i-1]
+    dleg=np.diff(leg,prepend=leg[0]); sw_high,sw_low=dleg==-1,dleg==1
+    
     for i in range(SWING,n):
         rh,rl,rc=H[i],L[i],C[i]; av=atr[i]; rv=rsi[i] if not np.isnan(rsi[i]) else 50
-        if i>=SWING:
-            if H[i-SWING]>np.max(H[i-SWING+1:i+1]): sw_hl=H[i]; sw_hc=False
-            if L[i-SWING]<np.min(L[i-SWING+1:i+1]): sw_ll=L[i]; sw_lc=False
+        if sw_high[i]: sw_hl=H[i]; sw_hc=False
+        if sw_low[i]: sw_ll=L[i]; sw_lc=False
         pv=C[i-1] if i>0 else 0
         if not sw_hc and not np.isnan(sw_hl) and pv<=sw_hl and rc>sw_hl:
             sw_hc=True
