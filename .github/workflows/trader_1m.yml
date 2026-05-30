@@ -1,4 +1,4 @@
-name: V4 1m Adaptive Trader
+name: V4 1m Adaptive Trader (纸盘)
 on:
   schedule:
     - cron: '*/5 * * * *'
@@ -14,9 +14,10 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install pandas numpy
-      - name: Run V4 1m Adaptive
+      - name: Run V4 1m Paper
         env:
           OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
           OKX_SECRET: ${{ secrets.OKX_SECRET }}
           OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+          PAPER_MODE: "true"
         run: python3 trader_1m.py
